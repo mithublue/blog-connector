@@ -16,6 +16,9 @@ class Blog_Fetcher_Admin_List
         // Add filter dropdowns
         add_action('restrict_manage_posts', array($this, 'add_admin_filters'));
         add_action('pre_get_posts', array($this, 'apply_admin_filters'));
+
+        // AJAX for column refresh
+        add_action('wp_ajax_bf_refresh_column', array($this, 'refresh_column_ajax'));
     }
 
     /**
@@ -58,35 +61,58 @@ class Blog_Fetcher_Admin_List
         }
 
         if ($column === 'bf_gsc_status') {
-            $status = get_post_meta($post_id, '_blog_fetcher_gsc_status', true);
-            $platform_type = get_post_meta($post_id, '_blog_fetcher_platform_type', true);
-            
             echo '<div class="bf-gsc-column-content" id="bf-gsc-status-' . $post_id . '">';
-            if (empty($status)) {
-                echo '<span style="color:#999; display: flex; align-items: center; gap: 5px;"><span class="dashicons dashicons-minus"></span> ' . __('Not Submitted', 'blog-fetcher') . '</span>';
-            } elseif (strpos($status, 'Success') !== false) {
-                echo '<span style="color:#46b450; font-weight: 500; display: flex; align-items: center; gap: 5px;"><span class="dashicons dashicons-yes-alt"></span> ' . __('Submitted', 'blog-fetcher') . '</span>';
-                $date = str_replace('Success: Last indexed at ', '', $status);
-                echo '<div style="font-size: 10px; color: #666; margin-top: 2px;">' . esc_html($date) . '</div>';
-            } elseif (strpos($status, 'Error') !== false) {
-                echo '<span style="color:#d63638; font-weight: 500; display: flex; align-items: center; gap: 5px;"><span class="dashicons dashicons-warning"></span> ' . __('Failed', 'blog-fetcher') . '</span>';
-                $err = substr($status, 7);
-                echo '<div style="font-size: 10px; color: #d63638; margin-top: 2px;" title="' . esc_attr($err) . '">' . esc_html(wp_trim_words($err, 5)) . '</div>';
-            } else {
-                echo '<span style="color:#2271b1; display: flex; align-items: center; gap: 5px;"><span class="dashicons dashicons-update spin"></span> ' . esc_html($status) . '</span>';
-            }
-
-            // Add Index button if it's a 3rd party platform
-            if ($platform_type === '3rd_party') {
-                echo '<div style="margin-top: 5px;">';
-                echo '<a href="#" class="bf-list-index-btn" data-post-id="' . $post_id . '" style="text-decoration:none; font-size:11px; background:#2271b1; color:#fff; padding:2px 6px; border-radius:3px; display:inline-flex; align-items:center; gap:3px;">';
-                echo '<span class="dashicons dashicons-cloud" style="font-size:14px; width:14px; height:14px;"></span> ' . __('Index Now', 'blog-fetcher');
-                echo '</a>';
-                echo '<span class="spinner bf-list-spinner" style="float:none; margin:0 0 0 5px;"></span>';
-                echo '</div>';
-            }
+            echo $this->get_gsc_column_content($post_id);
             echo '</div>';
         }
+    }
+
+    /**
+     * Helper to get the HTML content for the GSC status column.
+     */
+    private function get_gsc_column_content($post_id)
+    {
+        $status = get_post_meta($post_id, '_blog_fetcher_gsc_status', true);
+        $platform_type = get_post_meta($post_id, '_blog_fetcher_platform_type', true);
+        $html = '';
+
+        if (empty($status)) {
+            $html .= '<span style="color:#999; display: flex; align-items: center; gap: 5px;"><span class="dashicons dashicons-minus"></span> ' . __('Not Submitted', 'blog-fetcher') . '</span>';
+        } elseif (strpos($status, 'Success') !== false) {
+            $html .= '<span style="color:#46b450; font-weight: 500; display: flex; align-items: center; gap: 5px;"><span class="dashicons dashicons-yes-alt"></span> ' . __('Submitted', 'blog-fetcher') . '</span>';
+            $date = str_replace('Success: Last indexed at ', '', $status);
+            $html .= '<div style="font-size: 10px; color: #666; margin-top: 2px;">' . esc_html($date) . '</div>';
+        } elseif (strpos($status, 'Error') !== false) {
+            $html .= '<span style="color:#d63638; font-weight: 500; display: flex; align-items: center; gap: 5px;"><span class="dashicons dashicons-warning"></span> ' . __('Failed', 'blog-fetcher') . '</span>';
+            $err = substr($status, 7);
+            $html .= '<div style="font-size: 10px; color: #d63638; margin-top: 2px;" title="' . esc_attr($err) . '">' . esc_html(wp_trim_words($err, 5)) . '</div>';
+        } else {
+            $html .= '<span style="color:#2271b1; display: flex; align-items: center; gap: 5px;"><span class="dashicons dashicons-update spin"></span> ' . esc_html($status) . '</span>';
+        }
+
+        // Add Index button if it's a 3rd party platform
+        if ($platform_type === '3rd_party') {
+            $html .= '<div style="margin-top: 5px;">';
+            $html .= '<a href="#" class="bf-list-index-btn" data-post-id="' . $post_id . '" style="text-decoration:none; font-size:11px; background:#2271b1; color:#fff; padding:2px 6px; border-radius:3px; display:inline-flex; align-items:center; gap:3px;">';
+            $html .= '<span class="dashicons dashicons-cloud" style="font-size:14px; width:14px; height:14px;"></span> ' . __('Index Now', 'blog-fetcher');
+            $html .= '</a>';
+            $html .= '<span class="spinner bf-list-spinner" style="float:none; margin:0 0 0 5px;"></span>';
+            $html .= '</div>';
+        }
+
+        return $html;
+    }
+
+    /**
+     * AJAX handler to refresh the column content.
+     */
+    public function refresh_column_ajax()
+    {
+        $post_id = intval($_POST['post_id'] ?? 0);
+        if ($post_id) {
+            echo $this->get_gsc_column_content($post_id);
+        }
+        wp_die();
     }
 
     /**
@@ -142,13 +168,13 @@ class Blog_Fetcher_Admin_List
             .dashicons-update.spin {
                 animation: bf-spin 2s infinite linear;
             }
-            .bf-list-spinner { visibility: hidden; }
+            .bf-list-spinner { visibility: hidden; float: none !important; margin: 0 0 0 5px !important; }
             .bf-list-spinner.is-active { visibility: visible; }
         </style>
 
         <script>
             jQuery(document).ready(function ($) {
-                $('.bf-list-index-btn').on('click', function (e) {
+                $(document).on('click', '.bf-list-index-btn', function (e) {
                     e.preventDefault();
                     var btn = $(this);
                     var postId = btn.data('post-id');
@@ -163,13 +189,17 @@ class Blog_Fetcher_Admin_List
                         post_id: postId,
                         nonce: '<?php echo wp_create_nonce("bf_manual_index_nonce"); ?>'
                     }, function (response) {
-                        spinner.removeClass('is-active');
-                        btn.css('pointer-events', 'auto').css('opacity', '1');
-                        
                         if (response.success) {
-                            // Update the column content dynamically
-                            location.reload(); // Quickest way to refresh all status
+                            // Fetch new HTML for the column
+                            $.post(ajaxurl, {
+                                action: 'bf_refresh_column',
+                                post_id: postId
+                            }, function (html) {
+                                container.html(html);
+                            });
                         } else {
+                            spinner.removeClass('is-active');
+                            btn.css('pointer-events', 'auto').css('opacity', '1');
                             alert('Error: ' + response.data);
                         }
                     });
