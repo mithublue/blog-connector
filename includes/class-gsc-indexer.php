@@ -103,7 +103,7 @@ class Blog_Fetcher_GSC_Indexer
     {
         $token = $this->get_google_access_token();
         if (!$token) {
-            $msg = 'Error: Failed to get access token. Check Google JSON key path in settings.';
+            $msg = $this->last_error ?? 'Error: Failed to get access token.';
             error_log('Blog Fetcher GSC: ' . $msg);
             if ($post_id) {
                 update_post_meta($post_id, '_blog_fetcher_gsc_status', $msg);
@@ -162,15 +162,23 @@ class Blog_Fetcher_GSC_Indexer
         $stored_json = get_option('blog_fetcher_google_service_account_json', '');
 
         if (empty($stored_json)) {
-            error_log('Blog Fetcher GSC: No service account JSON configured in settings.');
+            $this->last_error = 'Step 1 FAIL: No service account JSON in DB. Go to Settings → Blog Fetcher and paste your JSON.';
+            error_log('Blog Fetcher GSC: ' . $this->last_error);
             return false;
         }
 
-        // json_decode handles \n in private_key correctly — no escaping issues
+        // json_decode handles \n in private_key correctly
         $key_data = json_decode($stored_json, true);
 
-        if (!$key_data || empty($key_data['client_email']) || empty($key_data['private_key'])) {
-            error_log('Blog Fetcher GSC: Invalid service account JSON in settings.');
+        if (!$key_data) {
+            $this->last_error = 'Step 2 FAIL: json_decode failed. JSON error: ' . json_last_error_msg() . '. Stored length: ' . strlen($stored_json);
+            error_log('Blog Fetcher GSC: ' . $this->last_error);
+            return false;
+        }
+
+        if (empty($key_data['client_email']) || empty($key_data['private_key'])) {
+            $this->last_error = 'Step 2 FAIL: JSON parsed but missing client_email or private_key. Keys found: ' . implode(', ', array_keys($key_data));
+            error_log('Blog Fetcher GSC: ' . $this->last_error);
             return false;
         }
 
@@ -191,7 +199,8 @@ class Blog_Fetcher_GSC_Indexer
         $signature_data = $header . '.' . $payload;
         $signature = '';
         if (!openssl_sign($signature_data, $signature, $key_data['private_key'], 'SHA256')) {
-            error_log('Blog Fetcher GSC: Failed to sign JWT. The private key may be invalid.');
+            $this->last_error = 'Step 3 FAIL: openssl_sign failed. Key starts with: ' . substr($key_data['private_key'], 0, 40);
+            error_log('Blog Fetcher GSC: ' . $this->last_error);
             return false;
         }
 
@@ -205,12 +214,21 @@ class Blog_Fetcher_GSC_Indexer
         ));
 
         if (is_wp_error($response)) {
-            error_log('Blog Fetcher GSC: Token request error: ' . $response->get_error_message());
+            $this->last_error = 'Step 4 FAIL: HTTP error: ' . $response->get_error_message();
+            error_log('Blog Fetcher GSC: ' . $this->last_error);
             return false;
         }
 
-        $data = json_decode(wp_remote_retrieve_body($response), true);
-        return $data['access_token'] ?? false;
+        $resp_body = wp_remote_retrieve_body($response);
+        $data = json_decode($resp_body, true);
+
+        if (empty($data['access_token'])) {
+            $this->last_error = 'Step 5 FAIL: No access_token in response. Google said: ' . $resp_body;
+            error_log('Blog Fetcher GSC: ' . $this->last_error);
+            return false;
+        }
+
+        return $data['access_token'];
     }
 }
 

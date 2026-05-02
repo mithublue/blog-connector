@@ -43,18 +43,21 @@ class Blog_Fetcher_Settings
             update_option('blog_fetcher_api_token', sanitize_text_field($api_token));
 
             // Save Google Service Account JSON
+            // Save Google Service Account JSON (only if user actually pasted something)
             if (isset($_POST['google_service_account_json'])) {
-                // wp_unslash is critical — prevents WordPress from escaping backslashes
                 $raw_json = wp_unslash(trim($_POST['google_service_account_json']));
-                // Validate it's real JSON before saving
-                $parsed = json_decode($raw_json, true);
-                if ($parsed && !empty($parsed['client_email']) && !empty($parsed['private_key'])) {
-                    update_option('blog_fetcher_google_service_account_json', $raw_json);
-                    echo '<div class="updated"><p>✅ Settings saved. Service Account: <strong>' . esc_html($parsed['client_email']) . '</strong></p></div>';
+                if (!empty($raw_json)) {
+                    $parsed = json_decode($raw_json, true);
+                    if ($parsed && !empty($parsed['client_email']) && !empty($parsed['private_key'])) {
+                        // Store as autoload=false for security
+                        update_option('blog_fetcher_google_service_account_json', $raw_json, false);
+                        echo '<div class="updated"><p>✅ Settings saved. Service Account: <strong>' . esc_html($parsed['client_email']) . '</strong></p></div>';
+                    } else {
+                        echo '<div class="error"><p>❌ Invalid JSON or missing required fields. Google credentials were NOT updated.</p></div>';
+                    }
                 } else {
-                    echo '<div class="error"><p>❌ Invalid JSON or missing <code>client_email</code>/<code>private_key</code> fields. Other settings were saved.</p></div>';
-                    update_option('blog_fetcher_platforms', $platforms);
-                    update_option('blog_fetcher_api_token', sanitize_text_field($api_token));
+                    // Textarea is empty — keep existing credentials, just save other settings
+                    echo '<div class="updated"><p>Settings saved. Google credentials unchanged.</p></div>';
                 }
             } else {
                 echo '<div class="updated"><p>Settings saved successfully.</p></div>';
