@@ -44,29 +44,24 @@ class Blog_Fetcher_GSC_Indexer
      */
     public function maybe_index_post($post_id, $post)
     {
-        // Only for posts
         if ($post->post_type !== 'post') {
             return;
         }
 
-        // Avoid autosave, revisions, etc.
         if (defined('DOING_AUTOSAVE') && DOING_AUTOSAVE) {
             return;
         }
 
-        // Check if platform type is 3rd party
         $platform_type = get_post_meta($post_id, '_blog_fetcher_platform_type', true);
         if ($platform_type !== '3rd_party') {
             return;
         }
 
-        // Get the mapped frontend URL
         $url = $this->get_frontend_post_url($post_id);
         if (!$url) {
             return;
         }
 
-        // Index the post
         $this->index_url($url);
     }
 
@@ -108,7 +103,7 @@ class Blog_Fetcher_GSC_Indexer
     {
         $token = $this->get_google_access_token();
         if (!$token) {
-            $msg = 'Error: Failed to get access token. Check your Google credentials in settings.';
+            $msg = 'Error: Failed to get access token. Check Google JSON key path in settings.';
             error_log('Blog Fetcher GSC: ' . $msg);
             if ($post_id) {
                 update_post_meta($post_id, '_blog_fetcher_gsc_status', $msg);
@@ -132,7 +127,7 @@ class Blog_Fetcher_GSC_Indexer
 
         if (is_wp_error($response)) {
             $msg = 'Error: ' . $response->get_error_message();
-            error_log('Blog Fetcher GSC: Request error: ' . $msg);
+            error_log('Blog Fetcher GSC: ' . $msg);
             if ($post_id) {
                 update_post_meta($post_id, '_blog_fetcher_gsc_status', $msg);
             }
@@ -159,25 +154,25 @@ class Blog_Fetcher_GSC_Indexer
     }
 
     /**
-     * Get OAuth2 Access Token using the service account credentials from settings.
+     * Get OAuth2 Access Token by reading the JSON key file directly.
+     * This avoids all WordPress escaping issues with private keys.
      */
     private function get_google_access_token()
     {
-        $client_email = get_option('blog_fetcher_google_client_email');
-        $private_key  = get_option('blog_fetcher_google_private_key');
+        $stored_json = get_option('blog_fetcher_google_service_account_json', '');
 
-        if (!$client_email || !$private_key) {
-            error_log('Blog Fetcher GSC: Credentials not configured in settings.');
+        if (empty($stored_json)) {
+            error_log('Blog Fetcher GSC: No service account JSON configured in settings.');
             return false;
         }
 
-        // Normalize private key:
-        // Handles literal \n strings (from JSON copy-paste or DB storage issues)
-        // and also normalizes Windows-style CRLF line endings.
-        $private_key = str_replace('\\n', "\n", $private_key);
-        $private_key = str_replace('\\r', "\r", $private_key);
-        $private_key = str_replace("\r\n", "\n", $private_key);
-        $private_key = trim($private_key);
+        // json_decode handles \n in private_key correctly — no escaping issues
+        $key_data = json_decode($stored_json, true);
+
+        if (!$key_data || empty($key_data['client_email']) || empty($key_data['private_key'])) {
+            error_log('Blog Fetcher GSC: Invalid service account JSON in settings.');
+            return false;
+        }
 
         $header = base64_url_encode(json_encode(array(
             'alg' => 'RS256',
@@ -186,7 +181,7 @@ class Blog_Fetcher_GSC_Indexer
 
         $now = time();
         $payload = base64_url_encode(json_encode(array(
-            'iss'   => $client_email,
+            'iss'   => $key_data['client_email'],
             'scope' => 'https://www.googleapis.com/auth/indexing',
             'aud'   => 'https://oauth2.googleapis.com/token',
             'iat'   => $now,
@@ -195,8 +190,8 @@ class Blog_Fetcher_GSC_Indexer
 
         $signature_data = $header . '.' . $payload;
         $signature = '';
-        if (!openssl_sign($signature_data, $signature, $private_key, 'SHA256')) {
-            error_log('Blog Fetcher GSC: Failed to sign JWT. Verify private key in settings.');
+        if (!openssl_sign($signature_data, $signature, $key_data['private_key'], 'SHA256')) {
+            error_log('Blog Fetcher GSC: Failed to sign JWT. The private key may be invalid.');
             return false;
         }
 
