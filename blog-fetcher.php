@@ -34,6 +34,7 @@ class Blog_Fetcher
 		require_once plugin_dir_path(__FILE__) . 'includes/class-rest-api.php';
 		require_once plugin_dir_path(__FILE__) . 'includes/class-seo-fixer.php';
 		require_once plugin_dir_path(__FILE__) . 'includes/class-gsc-indexer.php';
+		require_once plugin_dir_path(__FILE__) . 'includes/class-admin-list.php';
 	}
 
 	private function init_hooks()
@@ -55,6 +56,7 @@ class Blog_Fetcher
 
 		new Blog_Fetcher_SEO_Fixer();
 		new Blog_Fetcher_GSC_Indexer();
+		new Blog_Fetcher_Admin_List();
 	}
 }
 
