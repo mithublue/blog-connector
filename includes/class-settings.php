@@ -44,10 +44,12 @@ class Blog_Fetcher_Settings
 
             // Save Google Credentials
             if (isset($_POST['google_client_email'])) {
-                update_option('blog_fetcher_google_client_email', sanitize_email($_POST['google_client_email']));
+                update_option('blog_fetcher_google_client_email', sanitize_email(wp_unslash($_POST['google_client_email'])));
             }
             if (isset($_POST['google_private_key'])) {
-                update_option('blog_fetcher_google_private_key', trim($_POST['google_private_key']));
+                // wp_unslash prevents WordPress from doubling backslashes on every save
+                $raw_key = wp_unslash(trim($_POST['google_private_key']));
+                update_option('blog_fetcher_google_private_key', $raw_key);
             }
 
             echo '<div class="updated"><p>Settings saved successfully.</p></div>';

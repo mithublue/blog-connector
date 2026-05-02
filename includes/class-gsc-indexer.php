@@ -71,7 +71,7 @@ class Blog_Fetcher_GSC_Indexer
     }
 
     /**
-     * Get the mapped frontend URL for a post (copied logic from SEO_Fixer for consistency).
+     * Get the mapped frontend URL for a post.
      */
     private function get_frontend_post_url($post_id)
     {
@@ -108,53 +108,54 @@ class Blog_Fetcher_GSC_Indexer
     {
         $token = $this->get_google_access_token();
         if (!$token) {
-            $msg = 'Blog Fetcher GSC: Failed to get access token.';
-            error_log($msg);
+            $msg = 'Error: Failed to get access token. Check your Google credentials in settings.';
+            error_log('Blog Fetcher GSC: ' . $msg);
             if ($post_id) {
-                update_post_meta($post_id, '_blog_fetcher_gsc_status', 'Error: Failed to get access token.');
+                update_post_meta($post_id, '_blog_fetcher_gsc_status', $msg);
             }
             return array('error' => $msg);
         }
 
         $api_url = 'https://indexing.googleapis.com/v3/urlNotifications:publish';
         $body = json_encode(array(
-            'url' => $url,
+            'url'  => $url,
             'type' => 'URL_UPDATED'
         ));
 
         $response = wp_remote_post($api_url, array(
             'headers' => array(
-                'Content-Type' => 'application/json',
+                'Content-Type'  => 'application/json',
                 'Authorization' => 'Bearer ' . $token
             ),
             'body' => $body
         ));
 
         if (is_wp_error($response)) {
-            $msg = 'Blog Fetcher GSC: Request error: ' . $response->get_error_message();
-            error_log($msg);
+            $msg = 'Error: ' . $response->get_error_message();
+            error_log('Blog Fetcher GSC: Request error: ' . $msg);
             if ($post_id) {
-                update_post_meta($post_id, '_blog_fetcher_gsc_status', 'Error: ' . $response->get_error_message());
+                update_post_meta($post_id, '_blog_fetcher_gsc_status', $msg);
             }
             return array('error' => $msg);
-        } else {
-            $resp_body = wp_remote_retrieve_body($response);
-            $data = json_decode($resp_body, true);
-
-            if (isset($data['error'])) {
-                $msg = 'GSC Error: ' . ($data['error']['message'] ?? 'Unknown error');
-                if ($post_id) {
-                    update_post_meta($post_id, '_blog_fetcher_gsc_status', $msg);
-                }
-                return array('error' => $msg);
-            }
-
-            error_log('Blog Fetcher GSC: Indexed URL: ' . $url . ' - Response: ' . $resp_body);
-            if ($post_id) {
-                update_post_meta($post_id, '_blog_fetcher_gsc_status', 'Success: Last indexed at ' . current_time('mysql'));
-            }
-            return array('success' => true);
         }
+
+        $resp_body = wp_remote_retrieve_body($response);
+        $data = json_decode($resp_body, true);
+
+        if (isset($data['error'])) {
+            $msg = 'GSC Error: ' . ($data['error']['message'] ?? 'Unknown error');
+            error_log('Blog Fetcher GSC: ' . $msg);
+            if ($post_id) {
+                update_post_meta($post_id, '_blog_fetcher_gsc_status', $msg);
+            }
+            return array('error' => $msg);
+        }
+
+        error_log('Blog Fetcher GSC: Indexed URL: ' . $url . ' - Response: ' . $resp_body);
+        if ($post_id) {
+            update_post_meta($post_id, '_blog_fetcher_gsc_status', 'Success: Last indexed at ' . current_time('mysql'));
+        }
+        return array('success' => true);
     }
 
     /**
@@ -163,15 +164,20 @@ class Blog_Fetcher_GSC_Indexer
     private function get_google_access_token()
     {
         $client_email = get_option('blog_fetcher_google_client_email');
-        $private_key = get_option('blog_fetcher_google_private_key');
+        $private_key  = get_option('blog_fetcher_google_private_key');
 
         if (!$client_email || !$private_key) {
-            error_log('Blog Fetcher GSC: Google Indexing API credentials not configured in settings.');
+            error_log('Blog Fetcher GSC: Credentials not configured in settings.');
             return false;
         }
 
-        // Clean up private key (sometimes WP adds slashes or extra spaces)
-        $private_key = str_replace(['\n', '\r'], ["\n", "\r"], $private_key);
+        // Normalize private key:
+        // Handles literal \n strings (from JSON copy-paste or DB storage issues)
+        // and also normalizes Windows-style CRLF line endings.
+        $private_key = str_replace('\\n', "\n", $private_key);
+        $private_key = str_replace('\\r', "\r", $private_key);
+        $private_key = str_replace("\r\n", "\n", $private_key);
+        $private_key = trim($private_key);
 
         $header = base64_url_encode(json_encode(array(
             'alg' => 'RS256',
@@ -180,17 +186,17 @@ class Blog_Fetcher_GSC_Indexer
 
         $now = time();
         $payload = base64_url_encode(json_encode(array(
-            'iss' => $client_email,
+            'iss'   => $client_email,
             'scope' => 'https://www.googleapis.com/auth/indexing',
-            'aud' => 'https://oauth2.googleapis.com/token',
-            'iat' => $now,
-            'exp' => $now + 3600
+            'aud'   => 'https://oauth2.googleapis.com/token',
+            'iat'   => $now,
+            'exp'   => $now + 3600
         )));
 
         $signature_data = $header . '.' . $payload;
         $signature = '';
         if (!openssl_sign($signature_data, $signature, $private_key, 'SHA256')) {
-            error_log('Blog Fetcher GSC: Failed to sign JWT. Check if the private key is valid.');
+            error_log('Blog Fetcher GSC: Failed to sign JWT. Verify private key in settings.');
             return false;
         }
 
@@ -199,11 +205,12 @@ class Blog_Fetcher_GSC_Indexer
         $response = wp_remote_post('https://oauth2.googleapis.com/token', array(
             'body' => array(
                 'grant_type' => 'urn:ietf:params:oauth:grant-type:jwt-bearer',
-                'assertion' => $jwt
+                'assertion'  => $jwt
             )
         ));
 
         if (is_wp_error($response)) {
+            error_log('Blog Fetcher GSC: Token request error: ' . $response->get_error_message());
             return false;
         }
 
